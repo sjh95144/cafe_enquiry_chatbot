@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SQLite Viewer</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@300;400;600&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
+<style>
+  :root {
+    --bg: #f5f0e8;
+    --surface: #fdfaf4;
+    --border: #d4c9b0;
+    --text: #2c2416;
+    --muted: #8a7a60;
+    --accent: #6b4f2a;
+    --accent2: #c8956b;
+    --tag-bg: #ede4d4;
+    --shadow: 0 2px 12px rgba(44,36,22,0.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'DM Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ── LANDING ── */
+  #landing {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 32px;
+    padding: 40px 20px;
+  }
+  .brand {
+    text-align: center;
+  }
+  .brand h1 {
+    font-family: 'Noto Serif KR', serif;
+    font-size: 2rem;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: -0.02em;
+  }
+  .brand p {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  .drop-zone {
+    width: 100%;
+    max-width: 480px;
+    border: 2px dashed var(--border);
+    border-radius: 16px;
+    background: var(--surface);
+    padding: 52px 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: var(--accent2);
+    background: #fdf5ec;
+    box-shadow: 0 0 0 4px rgba(200,149,107,0.12);
+  }
+  .drop-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer;
+  }
+  .drop-icon {
+    font-size: 2.8rem;
+    margin-bottom: 14px;
+  }
+  .drop-zone h2 {
+    font-family: 'Noto Serif KR', serif;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .drop-zone p {
+    font-size: 0.75rem;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .drop-zone .ext-badge {
+    display: inline-block;
+    background: var(--tag-bg);
+    color: var(--accent);
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 0.7rem;
+    margin-top: 12px;
+  }
+  #loadingMsg {
+    display: none;
+    font-size: 0.8rem;
+    color: var(--muted);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:1} }
+
+  /* ── VIEWER ── */
+  #viewer { display: none; }
+  header {
+    background: var(--accent);
+    color: #fdf8ef;
+    padding: 20px 32px 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    border-bottom: 3px solid var(--accent2);
+    flex-wrap: wrap;
+  }
+  header h1 {
+    font-family: 'Noto Serif KR', serif;
+    font-size: 1.3rem;
+    font-weight: 600;
+  }
+  header span { font-size: 0.75rem; opacity: 0.55; }
+  .btn-reset {
+    margin-left: auto;
+    padding: 6px 14px;
+    border: 1.5px solid rgba(253,248,239,0.35);
+    border-radius: 6px;
+    background: transparent;
+    color: #fdf8ef;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.73rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-reset:hover { background: rgba(255,255,255,0.12); }
+
+  .tabs-wrap {
+    background: var(--accent);
+    padding: 0 32px;
+    display: flex;
+    overflow-x: auto;
+    gap: 0;
+  }
+  .tab {
+    padding: 9px 20px 8px;
+    font-size: 0.75rem;
+    font-family: 'DM Mono', monospace;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: rgba(253,248,239,0.5);
+    border-bottom: 3px solid transparent;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .tab:hover { color: rgba(253,248,239,0.85); }
+  .tab.active { color: #fdf8ef; border-bottom-color: var(--accent2); background: rgba(255,255,255,0.07); }
+
+  .main { padding: 24px 32px; }
+  .toolbar {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 16px; flex-wrap: wrap;
+  }
+  .search-wrap { position: relative; flex: 1; min-width: 180px; max-width: 380px; }
+  .search-wrap input {
+    width: 100%; padding: 8px 12px 8px 34px;
+    border: 1.5px solid var(--border); border-radius: 6px;
+    background: var(--surface); font-family: 'DM Mono', monospace;
+    font-size: 0.78rem; color: var(--text); outline: none; transition: border 0.15s;
+  }
+  .search-wrap input:focus { border-color: var(--accent2); }
+  .search-wrap svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); opacity: 0.35; }
+  .info-bar { font-size: 0.73rem; color: var(--muted); margin-left: auto; }
+
+  .table-wrap {
+    overflow: auto;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    max-height: 62vh;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.77rem; }
+  thead { position: sticky; top: 0; z-index: 2; background: #ede4d4; }
+  th {
+    padding: 10px 14px; text-align: left; font-weight: 400;
+    color: var(--accent); border-bottom: 2px solid var(--border);
+    white-space: nowrap; cursor: pointer; user-select: none;
+    font-size: 0.71rem; letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  th:hover { background: #e0d7c5; }
+  th .si { display: inline-block; margin-left: 4px; opacity: 0.35; }
+  th.sa .si::after { content: '↑'; opacity: 1; }
+  th.sd .si::after { content: '↓'; opacity: 1; }
+  th .si::after { content: '↕'; }
+  td {
+    padding: 8px 14px; border-bottom: 1px solid #ece5d5;
+    vertical-align: top; max-width: 280px;
+  }
+  .cell-inner {
+    display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; overflow: hidden;
+    line-height: 1.5; cursor: pointer;
+    word-break: break-all;
+  }
+  .cell-inner.exp { -webkit-line-clamp: unset; white-space: pre-wrap; }
+  tr:hover td { background: rgba(200,149,107,0.06); }
+  tr:last-child td { border-bottom: none; }
+  .null-val { color: var(--muted); opacity: 0.4; font-style: italic; }
+
+  .pagination {
+    display: flex; align-items: center; gap: 7px;
+    margin-top: 14px; font-size: 0.75rem; color: var(--muted); flex-wrap: wrap;
+  }
+  .pagination button {
+    padding: 5px 11px; border: 1.5px solid var(--border); border-radius: 5px;
+    background: var(--surface); font-family: 'DM Mono', monospace;
+    font-size: 0.72rem; cursor: pointer; color: var(--text); transition: all 0.15s;
+  }
+  .pagination button:hover:not(:disabled) { border-color: var(--accent2); color: var(--accent); }
+  .pagination button:disabled { opacity: 0.3; cursor: not-allowed; }
+  .pn { padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.72rem; }
+  .pn.active { background: var(--accent); color: #fdf8ef; }
+
+  /* Modal */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(44,36,22,0.4); z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--surface); border-radius: 12px;
+    padding: 24px 28px; max-width: 600px; width: 92vw;
+    max-height: 78vh; overflow-y: auto;
+    box-shadow: 0 8px 40px rgba(44,36,22,0.2); position: relative;
+  }
+  .modal h3 {
+    font-family: 'Noto Serif KR', serif; font-size: 0.95rem;
+    color: var(--accent); margin-bottom: 14px; padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-close {
+    position: absolute; top: 14px; right: 18px;
+    background: none; border: none; font-size: 1.3rem;
+    cursor: pointer; color: var(--muted); line-height: 1;
+  }
+  .modal-close:hover { color: var(--text); }
+  .mf { margin-bottom: 12px; }
+  .ml { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 3px; }
+  .mv { font-size: 0.8rem; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+
+  /* SQL Panel */
+  .sql-panel {
+    margin-top: 20px;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .sql-panel-header {
+    padding: 10px 16px;
+    background: var(--tag-bg);
+    font-size: 0.72rem;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .sql-panel textarea {
+    width: 100%;
+    border: none;
+    border-top: 1px solid var(--border);
+    background: #fffdf8;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--text);
+    padding: 12px 16px;
+    resize: vertical;
+    min-height: 72px;
+    outline: none;
+  }
+  .sql-run-btn {
+    margin: 10px 16px 12px;
+    padding: 7px 18px;
+    background: var(--accent);
+    color: #fdf8ef;
+    border: none;
+    border-radius: 6px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .sql-run-btn:hover { background: #5a3f20; }
+  #sqlError { font-size: 0.73rem; color: #c0392b; padding: 0 16px 10px; display: none; }
+
+  @media (max-width: 600px) {
+    header, .main, .tabs-wrap { padding-left: 16px; padding-right: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- LANDING -->
+<div id="landing">
+  <div class="brand">
+    <h1>SQLite Viewer</h1>
+    <p>DB 파일을 드래그하거나 클릭해서 바로 열기</p>
+  </div>
+  <div class="drop-zone" id="dropZone">
+    <input type="file" accept=".db,.sqlite,.sqlite3" id="fileInput" onchange="handleFile(this.files[0])">
+    <div class="drop-icon">🗄️</div>
+    <h2>여기에 파일을 드롭하세요</h2>
+    <p>또는 클릭해서 파일 선택</p>
+    <span class="ext-badge">.db</span>
+    <span class="ext-badge">.sqlite</span>
+    <span class="ext-badge">.sqlite3</span>
+  </div>
+  <div id="loadingMsg">⏳ 파일 읽는 중...</div>
+</div>
+
+<!-- VIEWER -->
+<div id="viewer">
+  <header>
+    <div>
+      <h1 id="fileName">—</h1>
+      <span id="fileInfo"></span>
+    </div>
+    <button class="btn-reset" onclick="resetViewer()">← 다른 파일 열기</button>
+  </header>
+  <div class="tabs-wrap" id="tabsWrap"></div>
+  <div class="main">
+    <div class="toolbar">
+      <div class="search-wrap">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="text" id="searchInput" placeholder="검색..." oninput="applyFilter()">
+      </div>
+      <div class="info-bar" id="infoBar"></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead id="tableHead"></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+    <div class="pagination" id="pagination"></div>
+
+    <!-- SQL Query -->
+    <div class="sql-panel">
+      <div class="sql-panel-header">
+        <span>✦ SQL 직접 실행</span>
+      </div>
+      <textarea id="sqlInput" placeholder="SELECT * FROM table_name LIMIT 10;"></textarea>
+      <button class="sql-run-btn" onclick="runSQL()">실행 ▶</button>
+      <div id="sqlError"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h3 id="modalTitle"></h3>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<script>
+let SQL, db;
+let tables = [], currentTable = '', columns = [], allRows = [];
+let sortCol = -1, sortDir = 1, filterText = '', page = 1;
+const PAGE_SIZE = 25;
+
+// Init sql.js
+initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` })
+  .then(s => { SQL = s; })
+  .catch(() => alert('sql.js 로드 실패. 인터넷 연결을 확인해주세요.'));
+
+// Drag & drop
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) handleFile(file);
+});
+
+function handleFile(file) {
+  if (!SQL) { alert('sql.js가 아직 로딩 중입니다. 잠시 후 다시 시도해주세요.'); return; }
+  document.getElementById('loadingMsg').style.display = 'block';
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const arr = new Uint8Array(e.target.result);
+      if (db) db.close();
+      db = new SQL.Database(arr);
+      loadDB(file.name, file.size);
+    } catch(err) {
+      alert('SQLite 파일을 읽을 수 없습니다: ' + err.message);
+    }
+    document.getElementById('loadingMsg').style.display = 'none';
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function loadDB(name, size) {
+  // Get tables
+  const res = db.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
+  tables = res.length ? res[0].values.map(r => r[0]) : [];
+  if (!tables.length) { alert('테이블이 없습니다.'); return; }
+
+  document.getElementById('fileName').textContent = name;
+  document.getElementById('fileInfo').textContent = `${tables.length}개 테이블 · ${(size/1024).toFixed(1)} KB`;
+  document.getElementById('landing').style.display = 'none';
+  document.getElementById('viewer').style.display = 'block';
+
+  currentTable = tables[0];
+  renderTabs();
+  loadTable(currentTable);
+}
+
+function renderTabs() {
+  document.getElementById('tabsWrap').innerHTML = tables.map(t => {
+    try {
+      const cnt = db.exec(`SELECT COUNT(*) FROM "${t}"`);
+      const n = cnt[0]?.values[0][0] ?? '?';
+      return `<button class="tab${t===currentTable?' active':''}" onclick="switchTable('${t}')">${t} <small style="opacity:.5">${n}</small></button>`;
+    } catch { return `<button class="tab${t===currentTable?' active':''}" onclick="switchTable('${t}')">${t}</button>`; }
+  }).join('');
+}
+
+function switchTable(name) {
+  currentTable = name;
+  sortCol = -1; sortDir = 1;
+  filterText = ''; page = 1;
+  document.getElementById('searchInput').value = '';
+  document.getElementById('sqlInput').value = `SELECT * FROM "${name}" LIMIT 100;`;
+  renderTabs();
+  loadTable(name);
+}
+
+function loadTable(name) {
+  try {
+    const res = db.exec(`SELECT * FROM "${name}"`);
+    if (!res.length) { columns = []; allRows = []; render(); return; }
+    columns = res[0].columns;
+    allRows = res[0].values;
+    render();
+    document.getElementById('sqlInput').value = `SELECT * FROM "${name}" LIMIT 100;`;
+  } catch(e) {
+    alert('테이블 로드 오류: ' + e.message);
+  }
+}
+
+function getFiltered() {
+  if (!filterText) return allRows;
+  const q = filterText.toLowerCase();
+  return allRows.filter(row => row.some(c => String(c ?? '').toLowerCase().includes(q)));
+}
+
+function render() {
+  const filtered = getFiltered();
+  let sorted = [...filtered];
+  if (sortCol >= 0) {
+    sorted.sort((a,b) => {
+      const av = a[sortCol], bv = b[sortCol];
+      if (av == null) return 1; if (bv == null) return -1;
+      return (av < bv ? -1 : av > bv ? 1 : 0) * sortDir;
+    });
+  }
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  if (page > totalPages) page = totalPages;
+  const pageRows = sorted.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE);
+
+  // Head
+  document.getElementById('tableHead').innerHTML = `<tr>${columns.map((c,i) => {
+    const cls = sortCol===i ? (sortDir===1?'sa':'sd') : '';
+    return `<th class="${cls}" onclick="sortBy(${i})">${c}<span class="si"></span></th>`;
+  }).join('')}</tr>`;
+
+  // Body
+  document.getElementById('tableBody').innerHTML = pageRows.map((row, ri) =>
+    `<tr onclick="showModal(${ri}, ${JSON.stringify(sorted.map(_=>0)).replace(/0/g,'')})" style="cursor:pointer" data-idx="${(page-1)*PAGE_SIZE+ri}">${
+      row.map((cell, ci) => `<td><div class="cell-inner" onclick="toggleCell(event,this)">${fmtCell(cell)}</div></td>`).join('')
+    }</tr>`
+  ).join('');
+
+  // bind modal click properly
+  document.querySelectorAll('#tableBody tr').forEach((tr, ri) => {
+    tr.addEventListener('click', () => showModalRow(sorted[(page-1)*PAGE_SIZE+ri]));
+  });
+
+  document.getElementById('infoBar').textContent = `${filtered.length}건 / 전체 ${allRows.length}건`;
+  renderPagination(totalPages);
+}
+
+function fmtCell(val) {
+  if (val === null || val === undefined) return '<span class="null-val">NULL</span>';
+  const s = String(val);
+  return s.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function toggleCell(e, el) {
+  e.stopPropagation();
+  el.classList.toggle('exp');
+}
+
+function sortBy(ci) {
+  if (sortCol === ci) sortDir *= -1; else { sortCol = ci; sortDir = 1; }
+  render();
+}
+
+function applyFilter() {
+  filterText = document.getElementById('searchInput').value.trim();
+  page = 1; render();
+}
+
+function renderPagination(totalPages) {
+  const pg = document.getElementById('pagination');
+  if (totalPages <= 1) { pg.innerHTML = ''; return; }
+  let h = `<button onclick="goPage(${page-1})" ${page<=1?'disabled':''}>← 이전</button>`;
+  let s = Math.max(1, page-2), e = Math.min(totalPages, page+2);
+  if (s>1) h += `<span class="pn" onclick="goPage(1)">1</span>${s>2?'<span>…</span>':''}`;
+  for (let i=s;i<=e;i++) h+=`<span class="pn${i===page?' active':''}" onclick="goPage(${i})">${i}</span>`;
+  if (e<totalPages) h+=`${e<totalPages-1?'<span>…</span>':''}<span class="pn" onclick="goPage(${totalPages})">${totalPages}</span>`;
+  h += `<button onclick="goPage(${page+1})" ${page>=totalPages?'disabled':''}>다음 →</button>`;
+  h += `<span style="margin-left:6px">${page} / ${totalPages}</span>`;
+  pg.innerHTML = h;
+}
+
+function goPage(p) { page = p; render(); }
+
+function showModalRow(row) {
+  if (!row) return;
+  document.getElementById('modalTitle').textContent = currentTable + ' · 행 상세';
+  document.getElementById('modalContent').innerHTML = columns.map((col, i) =>
+    `<div class="mf"><div class="ml">${col}</div><div class="mv">${row[i] === null ? '<span class="null-val">NULL</span>' : String(row[i]).replace(/</g,'&lt;')}</div></div>`
+  ).join('');
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+function closeModal(e) {
+  if (!e || e.target === document.getElementById('modalOverlay'))
+    document.getElementById('modalOverlay').classList.remove('open');
+}
+document.addEventListener('keydown', e => { if (e.key==='Escape') closeModal(); });
+
+function runSQL() {
+  const sql = document.getElementById('sqlInput').value.trim();
+  const errEl = document.getElementById('sqlError');
+  if (!sql) return;
+  try {
+    const res = db.exec(sql);
+    errEl.style.display = 'none';
+    if (!res.length) { alert('결과 없음 (또는 INSERT/UPDATE/DELETE 성공)'); return; }
+    columns = res[0].columns;
+    allRows = res[0].values;
+    sortCol = -1; sortDir = 1; filterText = ''; page = 1;
+    document.getElementById('searchInput').value = '';
+    render();
+  } catch(e) {
+    errEl.style.display = 'block';
+    errEl.textContent = '⚠ ' + e.message;
+  }
+}
+
+// Ctrl+Enter to run SQL
+document.getElementById('sqlInput').addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runSQL(); }
+});
+
+function resetViewer() {
+  if (db) { db.close(); db = null; }
+  tables = []; currentTable = ''; columns = []; allRows = [];
+  document.getElementById('viewer').style.display = 'none';
+  document.getElementById('landing').style.display = 'flex';
+  document.getElementById('fileInput').value = '';
+}
+</script>
+<style>
+    .chat-win { position: fixed; bottom: 20px; right: 20px; width: 360px; height: 480px; background: white; border: 1px solid #d4c9b0; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.15); display: flex; flex-direction: column; font-family: sans-serif; z-index: 9999; }
+    .chat-header { background: #6b4f2a; color: white; padding: 12px; border-top-left-radius: 11px; border-top-right-radius: 11px; font-weight: bold; font-size: 15px; display: flex; justify-content: space-between; }
+    .chat-body { flex: 1; padding: 12px; overflow-y: auto; background: #fdfaf4; font-size: 14px; line-height: 1.5; }
+    .chat-footer { display: flex; padding: 10px; border-top: 1px solid #d4c9b0; background: white; border-bottom-left-radius: 11px; border-bottom-right-radius: 11px; }
+    .chat-input { flex: 1; border: 1px solid #ccc; padding: 8px; border-radius: 4px; outline: none; font-size: 13px; }
+    .chat-btn { background: #6b4f2a; color: white; border: none; padding: 6px 14px; margin-left: 6px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+    .chat-btn:disabled { background: #ccc; cursor: not-allowed; }
+    .msg { margin-bottom: 10px; padding: 9px 12px; border-radius: 8px; max-width: 85%; word-break: break-all; }
+    .msg.user { background: #ede4d4; margin-left: auto; text-align: left; color: #2c2416; }
+    .msg.bot { background: #fff; border: 1px solid #e1d7c1; margin-right: auto; color: #2c2416; }
+    .msg.system { background: #f1f3f5; border: 1px solid #dee2e6; max-width: 100%; font-size: 12px; color: #6c757d; text-align: center; }
+</style>
+
+<div class="chat-win">
+    <div class="chat-header">☕ AI 사장님 주문 상담실</div>
+    <div class="chat-body" id="chatBody">
+        <div class="msg system">💬 닉네임을 입력창에 쓰고 전송을 누르면 안내가 시작됩니다.</div>
+    </div>
+    <div class="chat-footer">
+        <input type="text" id="chatInput" class="chat-input" placeholder="닉네임을 입력하세요..." onkeypress="if(event.keyCode==13) sendWebMessage()">
+        <button id="chatBtn" class="chat-btn" onclick="sendWebMessage()">등록</button>
+    </div>
+</div>
+
+<script>
+    let userNickname = "";
+    let chatHistory = [];
+    let currentStatus = "chat"; // 'chat' (일반대화) 또는 'verify' (내용확인중)
+
+    async function sendWebMessage() {
+        const inputEl = document.getElementById('chatInput');
+        const bodyEl = document.getElementById('chatBody');
+        const btnEl = document.getElementById('chatBtn');
+        const text = inputEl.value.trim();
+        if (!text) return;
+
+        // 1단계: 닉네임 최초 등록 프로세스
+        if (!userNickname) {
+            userNickname = text;
+            bodyEl.innerHTML = ""; // 가이드 메시지 초기화
+            bodyEl.innerHTML += `<div class="msg system">✨ [고객 등록 성공] <b>${userNickname}님</b> 반갑습니다!</div>`;
+            
+            // 💡 요구사항 1: 대화 시작 전 어떤 키워드로 접수/종료하는지 명시적 공지
+            bodyEl.innerHTML += `<div class="msg bot">안녕하세요 ${userNickname}님! AI 카페 상담실입니다. 무엇을 도와드릴까요?<br><br><small style="color:#8a7a60;">※ 대화를 마치고 문의를 정식 접수하시려면 언제든 <b>'나가기'</b>를 입력해 주세요.</small></div>`;
+            
+            inputEl.value = "";
+            inputEl.placeholder = "메시지를 입력하세요...";
+            btnEl.innerText = "전송";
+            bodyEl.scrollTop = bodyEl.scrollHeight;
+            return;
+        }
+
+        // 화면에 고객 대화 추가
+        bodyEl.innerHTML += `<div class="msg user">${text}</div>`;
+        inputEl.value = "";
+        bodyEl.scrollTop = bodyEl.scrollHeight;
+
+        try {
+            // 서버에 대화 전송 (현재 상태 정보 포함)
+            const response = await fetch('http://127.0.0.1:8000/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    nickname: userNickname,
+                    message: text,
+                    history: chatHistory,
+                    state: currentStatus
+                })
+            });
+            
+            const data = await response.json();
+
+            // 분기점 A: 손님이 일반대화 중 '나가기'를 쳐서 확인 요청이 돌아왔을 때
+            if (data.status === "verify_request") {
+                currentStatus = "verify"; // 상태를 확인 모드로 강제 변경
+                bodyEl.innerHTML += `<div class="msg bot" style="background:#fff9db; border:1px solid #ffe3e3;">${data.reply}</div>`;
+            } 
+            // 분기점 B: 최종 승인 완료되어 완전히 접수 및 종료되었을 때
+            else if (data.status === "terminated") {
+                bodyEl.innerHTML += `<div class="msg bot" style="background:#e6fcf5; border:1px solid #c3fae8; font-weight:bold;">${data.reply}</div>`;
+                bodyEl.innerHTML += `<div class="msg system">🔒 [대화 정식 종료됨] 장부에 안전하게 기록되었습니다.</div>`;
+                
+                // 💡 요구사항 4: 대화 전면 차단 및 비활성화
+                inputEl.disabled = true;
+                btnEl.disabled = true;
+                inputEl.placeholder = "상담이 완전히 종료되었습니다.";
+            } 
+            // 분기점 C: 아니오를 눌러 대화 모드로 정상 복귀할 때
+            else if (data.status === "resume_chat") {
+                currentStatus = "chat"; // 다시 일반 대화 상태로 컴백
+                bodyEl.innerHTML += `<div class="msg bot">${data.reply}</div>`;
+            } 
+            // 분기점 D: 일반 대화 중일 때
+            else {
+                bodyEl.innerHTML += `<div class="msg bot">${data.reply}</div>`;
+                // 대화 기록 누적 (저장용)
+                chatHistory.push(`손님: ${text}`);
+                chatHistory.push(`사장님: ${data.reply}`);
+            }
+            
+        } catch (error) {
+            bodyEl.innerHTML += `<div class="msg bot" style="color:red;">통신 장애가 발생했습니다. 백엔드 구동 상태를 확인해 주세요.</div>`;
+        }
+        bodyEl.scrollTop = bodyEl.scrollHeight;
+    }
+</script>
+</body>
+</html>
